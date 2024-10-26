@@ -9,7 +9,7 @@ services:
       context: .
     environment:                     # Define environment variables here
       OPENAI_TOOL_LLM_NAME: gpt-3.5-turbo  # Corrected syntax for key-value pairs
-      MONGO_URI: ${MONGO_URI}
+      MONGODB_URI: ${MONGODB_URI}
       OPENAI_API_KEY: ${OPENAI_API_KEY}                    # Directory containing your Dockerfile
     volumes:
       - ./data:/data

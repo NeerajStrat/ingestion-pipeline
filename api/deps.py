@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 import nest_asyncio
 nest_asyncio.apply()
 
-client = AsyncIOMotorClient(settings.MONGO_URI)
+client = AsyncIOMotorClient(settings.MONGODB_URI)
 db = client[DB_NAME]
 
 @asynccontextmanager

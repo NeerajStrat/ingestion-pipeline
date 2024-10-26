@@ -107,8 +107,8 @@ async def ingest_dcoument_db(
     # db, session = db_session
     async with db_session as (db, session): 
 
-        collection = db.get_collection(constants.COLLECTION_NAME, session=session)
-        await collection.create_index([("url", ASCENDING)], unique=True, session=session)
+        collection = db.get_collection(constants.COLLECTION_NAME)
+        await collection.create_index([("url", ASCENDING)], unique=True)
         await async_upsert_documents_from_filings(tickers, collection)
 
 
@@ -117,15 +117,15 @@ def build_doc_id_to_index_map(
     documents: List[schema.Document],
 ) -> Dict[str, VectorStoreIndex]:
 
-    docstore=MongoDocumentStore.from_uri(uri=os.environ["MONGO_URI"], db_name=constants.DB_NAME, namespace=constants.DOCSTORE_NAMESPACE)
+    docstore=MongoDocumentStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.DOCSTORE_NAMESPACE)
     vector_store=MongoDBAtlasVectorSearch(
-        # MongoClient(os.environ["MONGO_URI"]), it will take from MONGO_URI
+        # MongoClient(os.environ["MONGODB_URI"]), it will take from MONGODB_URI
         db_name=constants.DB_NAME, 
         collection_name = constants.VECTOR_COLLECTION_NAME,
         vector_index_name = constants.VECTOR_INDEX_NAME,
         relevance_score_fn="cosine"
     )
-    index_store=MongoIndexStore.from_uri(uri=os.environ["MONGO_URI"], db_name=constants.DB_NAME, namespace=constants.INDEX_NAMESPACE)
+    index_store=MongoIndexStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.INDEX_NAMESPACE)
     
     # try:
     storage_context = StorageContext.from_defaults(
@@ -174,5 +174,5 @@ async def fetch_documents(
 
     async with db_session as (db, session): 
 
-        collection = db.get_collection(constants.COLLECTION_NAME, session=session)
+        collection = db.get_collection(constants.COLLECTION_NAME)
         return list(collection.find({}))
