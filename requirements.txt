@@ -1,0 +1,17 @@
+sec-edgar-downloader
+pdfkit
+tqdm
+llama-index-readers-file
+llama-index-vector-stores-mongodb
+llama-index-embeddings-openai
+llama-index-readers-s3
+llama-index-storage-index-store-mongodb
+llama-index-storage-docstore-mongodb
+pydantic
+fastapi
+uvicorn==0.32.0
+pytickersymbols
+motor==3.6.0
+guidance==0.1.16
+llama-index-question-gen-guidance==0.2.0
+llama-index-program-guidance==0.2.1
