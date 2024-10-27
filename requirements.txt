@@ -18,3 +18,4 @@ guidance==0.1.16
 llama-index-question-gen-guidance==0.2.0
 llama-index-program-guidance==0.2.1
 boto3==1.35.36
+sse-starlette==2.1.3

@@ -1,55 +1,46 @@
 import os
-import schema
+import asyncio
 import constants
-from tqdm import tqdm
-from pymongo import MongoClient, ASCENDING
-from ingestion.stock_utils import get_stocks_by_symbol, Stock
-from ingestion.file_utils import get_available_filings, Filing, load_pdf 
-from pytickersymbols import PyTickerSymbols
-from fastapi.encoders import jsonable_encoder
-from pathlib import Path
+import schema
+from tqdm.asyncio import tqdm
+from pymongo import ASCENDING
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Dict, List, Optional, Tuple
-from logger import logger
+from fastapi.encoders import jsonable_encoder
+from pathlib import Path
+# from sse_starlette.sse import EventSourceResponse
+from ingestion.stock_utils import get_stocks_by_symbol, Stock
+from ingestion.file_utils import get_available_filings, Filing, load_pdf
+from pytickersymbols import PyTickerSymbols
 from pymongo.errors import DuplicateKeyError
 from llama_index.storage.index_store.mongodb import MongoIndexStore
 from llama_index.storage.docstore.mongodb import MongoDocumentStore
 from llama_index.vector_stores.mongodb import MongoDBAtlasVectorSearch
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, StorageContext
-from llama_index.core import load_indices_from_storage, load_index_from_storage
+from llama_index.core import StorageContext, VectorStoreIndex, load_indices_from_storage
 from llm import LLM
+from logger import logger
 
 
-async def upsert_document_by_url(
-    collection, document: schema.Document
-) -> schema.Document:
+async def upsert_document_by_url(collection, document: schema.Document) -> schema.Document:
     """
-    Upsert a document
+    Upsert a document by URL.
     """
-    logger.debug({
-        **document.dict(),
-        "url": str(document.url)
-    })
-    insert_result = await collection.insert_one({
-        **document.dict(),
-        "url": str(document.url)
-    })
+    logger.debug({"url": str(document.url), **document.dict()})
+    insert_result = await collection.insert_one({"url": str(document.url), **document.dict()})
     document.id = insert_result.inserted_id
     logger.debug(document)
-    return document 
-    
-    
+    return document
+
+
 async def upsert_document(stock: Stock, filing: Filing, url_base: str, collection):
-    # construct a string for just the document's sub-path after the doc_dir
-    # e.g. "sec-edgar-filings/AAPL/10-K/0000320193-20-000096/primary-document.pdf"
-    logger.info("upsert_document")
+    """
+    Upserts an SEC document with metadata into the MongoDB collection.
+    """
+    logger.info("Upserting document")
     doc_path = Path(filing.file_path).relative_to(constants.DEFAULT_OUTPUT_DIR)
-    url_path = url_base.rstrip("/") + "/" + str(doc_path).lstrip("/")
-    doc_type = (
-        schema.SecDocumentTypeEnum.TEN_K
-        if filing.filing_type == "10-K"
-        else schema.SecDocumentTypeEnum.TEN_Q
-    )
+    url_path = f"{url_base.rstrip('/')}/{str(doc_path).lstrip('/')}"
+    doc_type = schema.SecDocumentTypeEnum.TEN_K if filing.filing_type == "10-K" else schema.SecDocumentTypeEnum.TEN_Q
+
     sec_doc_metadata = schema.SecDocumentMetadata(
         company_name=stock.name,
         company_ticker=stock.symbol,
@@ -62,120 +53,99 @@ async def upsert_document(stock: Stock, filing: Filing, url_base: str, collectio
         filed_as_of_date=filing.filed_as_of_date,
         date_as_of_change=filing.date_as_of_change,
     )
-    metadata_map: schema.DocumentMetadataMap = {
-        schema.DocumentMetadataKeysEnum.SEC_DOCUMENT: jsonable_encoder(
-            sec_doc_metadata.dict(exclude_none=True)
-        )
+
+    metadata_map = {
+        schema.DocumentMetadataKeysEnum.SEC_DOCUMENT: jsonable_encoder(sec_doc_metadata.dict(exclude_none=True))
     }
     doc = schema.Document(url=str(url_path), metadata_map=metadata_map)
-    logger.debug("doc {}".format(doc))
+    logger.debug(f"Document to insert: {doc}")
+
     try:
         doc = await upsert_document_by_url(collection, doc)
         build_doc_id_to_index_map([doc])
+        yield {"event": "vector", "data": f"Stored in Vector DB {doc.url}."}
     except DuplicateKeyError:
         logger.info(f"Duplicate key error: Document with URL {doc.url} already exists.")
+        yield {"event": "duplicate", "data": f"Duplicate record found for {doc.url}."}
     except Exception as e:
         logger.exception("An error occurred while inserting the document.")
-        raise e  # Re-raise any other exception
-    # pdf = await load_pdf(doc)
-    
+        raise e
+    else:
+        yield {"event": "upsert", "data": f"Upserted document for {filing.symbol}, filing type {filing.filing_type}, quarter {filing.quarter}"}
 
 
 async def async_upsert_documents_from_filings(tickers, collection):
     """
-    Upserts SEC documents into the database based on what has been downloaded to the filesystem.
+    Streams filings upserts and event publishing as SSE.
     """
-    logger.info("async_upsert_documents_from_filings")
-
-    url_base = "https://{}.s3.amazonaws.com".format(constants.BUCKET_NAME)
+    url_base = f"https://{constants.BUCKET_NAME}.s3.amazonaws.com"
     filings = get_available_filings(tickers)
     stocks_data = PyTickerSymbols()
     stocks_dict = get_stocks_by_symbol(stocks_data.get_all_indices())
-    
-    # print("Step 1",filings)
-    for filing in tqdm(filings, desc="Upserting docs from filings"):
+
+    for filing in tqdm(filings, desc="Upserting documents from filings"):
         if filing.symbol not in stocks_dict:
-            print(f"Symbol {filing.symbol} not found in stocks_dict. Skipping.")
+            yield {"event": "error", "data": f"Symbol {filing.symbol} not found in stocks_dict. Skipping."}
             continue
+
         stock = stocks_dict[filing.symbol]
-        await upsert_document(stock, filing, url_base, collection)
-        
-        
 
-async def ingest_dcoument_db(
-        db_session: Tuple[AsyncIOMotorDatabase, object],
-        tickers = List[str],
-    ):
+        async for event in upsert_document(stock, filing, url_base, collection):
+            yield event
 
-    # db, session = db_session
-    async with db_session as (db, session): 
-
-        collection = db.get_collection(constants.COLLECTION_NAME)
-        await collection.create_index([("url", ASCENDING)], unique=True)
-        await async_upsert_documents_from_filings(tickers, collection)
+    yield {"event": "done", "data": "Completed processing all filings."}
 
 
-def build_doc_id_to_index_map(
-    # llm,
-    documents: List[schema.Document],
-) -> Dict[str, VectorStoreIndex]:
+# async def ingest_document_db(db_session: Tuple[AsyncIOMotorDatabase, object], tickers: List[str]):
+    # """
+    # Initiates the document ingestion process and returns SSE for each filing.
+    # """
+    # async with db_session as (db, session):
+    #     collection = db.get_collection(constants.COLLECTION_NAME)
+    #     await collection.create_index([("url", ASCENDING)], unique=True)
+    #     return await async_upsert_documents_from_filings(tickers, collection)
 
-    docstore=MongoDocumentStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.DOCSTORE_NAMESPACE)
-    vector_store=MongoDBAtlasVectorSearch(
-        # MongoClient(os.environ["MONGODB_URI"]), it will take from MONGODB_URI
-        db_name=constants.DB_NAME, 
-        collection_name = constants.VECTOR_COLLECTION_NAME,
-        vector_index_name = constants.VECTOR_INDEX_NAME,
+
+def build_doc_id_to_index_map(documents: List[schema.Document]) -> Dict[str, VectorStoreIndex]:
+    """
+    Builds a mapping of document IDs to index objects.
+    """
+    docstore = MongoDocumentStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.DOCSTORE_NAMESPACE)
+    vector_store = MongoDBAtlasVectorSearch(
+        db_name=constants.DB_NAME,
+        collection_name=constants.VECTOR_COLLECTION_NAME,
+        vector_index_name=constants.VECTOR_INDEX_NAME,
         relevance_score_fn="cosine"
     )
-    index_store=MongoIndexStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.INDEX_NAMESPACE)
-    
-    # try:
-    storage_context = StorageContext.from_defaults(
-        docstore = docstore,
-        vector_store = vector_store,
-        index_store = index_store
-    )
+    index_store = MongoIndexStore.from_uri(uri=os.environ["MONGODB_URI"], db_name=constants.DB_NAME, namespace=constants.INDEX_NAMESPACE)
+
+    storage_context = StorageContext.from_defaults(docstore=docstore, vector_store=vector_store, index_store=index_store)
 
     try:
-        # Now you can access the id attribute safely
         index_ids = [str(doc.id) for doc in documents]
-        print(index_ids)  # This will print the list of ids
-    
-        indices = load_indices_from_storage(
-            storage_context,
-            index_ids=index_ids,
-        )
-        
+        indices = load_indices_from_storage(storage_context, index_ids=index_ids)
         doc_id_to_index = dict(zip(index_ids, indices))
-        
     except ValueError:
-        print(
-            "Failed to load indices from storage. Creating new indices. "
-            "If you're running the seed_db script, this is normal and expected."
-        )
         doc_id_to_index = {}
-        
         for doc in documents:
             llama_index_docs = load_pdf(doc)
             storage_context.docstore.add_documents(llama_index_docs)
             index = VectorStoreIndex.from_documents(
                 llama_index_docs,
                 storage_context=storage_context,
-                embed_model = LLM.embedding_model, # that's why they were passing service context here
-                # transformation = node_parser
+                embed_model=LLM.embedding_model
             )
             index.set_index_id(str(doc.id))
             doc_id_to_index[str(doc.id)] = index
 
-
     return doc_id_to_index
 
-async def fetch_documents(
-        db_session: Tuple[AsyncIOMotorDatabase, object]
-    ) -> List[schema.Document]:
 
-    async with db_session as (db, session): 
-
+async def fetch_documents(db_session: Tuple[AsyncIOMotorDatabase, object]) -> List[schema.Document]:
+    """
+    Fetches documents from the MongoDB collection.
+    """
+    async with db_session as (db, session):
         collection = db.get_collection(constants.COLLECTION_NAME)
-        return list(collection.find({}))
+        documents = await collection.find({}).to_list(length=None)
+        return documents
