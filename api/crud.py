@@ -30,10 +30,13 @@ async def upsert_document_by_url(
         **document.dict(),
         "url": str(document.url)
     })
-    await collection.insert_one({
+    insert_result = await collection.insert_one({
         **document.dict(),
         "url": str(document.url)
     })
+    document.id = insert_result.inserted_id
+    logger.debug(document)
+    return document 
     
     
 async def upsert_document(stock: Stock, filing: Filing, url_base: str, collection):
@@ -67,8 +70,8 @@ async def upsert_document(stock: Stock, filing: Filing, url_base: str, collectio
     doc = schema.Document(url=str(url_path), metadata_map=metadata_map)
     logger.debug("doc {}".format(doc))
     try:
-        await upsert_document_by_url(collection, doc)
-        await build_doc_id_to_index_map([doc])
+        doc = await upsert_document_by_url(collection, doc)
+        build_doc_id_to_index_map([doc])
     except DuplicateKeyError:
         logger.info(f"Duplicate key error: Document with URL {doc.url} already exists.")
     except Exception as e:
@@ -136,7 +139,7 @@ def build_doc_id_to_index_map(
 
     try:
         # Now you can access the id attribute safely
-        index_ids = [str(doc['_id']) for doc in documents]
+        index_ids = [str(doc.id) for doc in documents]
         print(index_ids)  # This will print the list of ids
     
         indices = load_indices_from_storage(
@@ -162,8 +165,8 @@ def build_doc_id_to_index_map(
                 embed_model = LLM.embedding_model, # that's why they were passing service context here
                 # transformation = node_parser
             )
-            index.set_index_id(str(doc['_id']))
-            doc_id_to_index[str(doc['_id'])] = index
+            index.set_index_id(str(doc.id))
+            doc_id_to_index[str(doc.id)] = index
 
 
     return doc_id_to_index

@@ -15,15 +15,11 @@ async def pipeline(
     after: Optional[str] = None,
     limit: Optional[int] = 3,
     convert_to_pdf: bool = True,
-    download_sec: bool = True,
-    upload_to_s3: bool = True,
+    download_sec: bool = True
     ):
     if download_sec:
         download_sec_docs.sec_download(ciks = tickers)
-    
 
-    # if upload_to_s3:
-    #     # upload_to_s3()
     logger.debug("ingest document to db")
     await ingest_dcoument_db(tickers = tickers, db_session=db_session)
 

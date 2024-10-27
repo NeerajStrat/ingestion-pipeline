@@ -1,9 +1,13 @@
+import os
+import boto3
 import pdfkit
 import shutil
 from sec_edgar_downloader import Downloader
 from typing import List, Optional
 from pathlib import Path
 from tqdm.contrib.itertools import product
+from botocore.exceptions import NoCredentialsError
+import constants
 from logger import logger
 
 from constants import SEC_EDGAR_COMPANY_NAME, SEC_EDGAR_EMAIL, DEFAULT_CIKS, DEFAULT_FILING_TYPES, DEFAULT_OUTPUT_DIR
@@ -19,6 +23,21 @@ def _download_filing(cik: str, filing_type: str, output_dir: str, limit=None, be
     print("_download_filing")
     dl = Downloader(SEC_EDGAR_COMPANY_NAME, SEC_EDGAR_EMAIL, output_dir)
     dl.get(filing_type, cik, limit=limit, before=before, after=after, download_details=True)
+
+def upload_to_s3(file_path):
+    s3_client = boto3.client('s3',
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"]
+    )
+    s3_key = file_path.split('data/')[1]
+    try:
+        # Upload the file
+        s3_client.upload_file(file_path, constants.BUCKET_NAME, s3_key)
+        print(f"File uploaded successfully to s3://{constants.BUCKET_NAME}/{s3_key}")
+    except FileNotFoundError:
+        print(f"The file {file_path} was not found")
+    except NoCredentialsError:
+        print("Credentials not available")
 
 def _convert_to_pdf(output_dir: str):
     """Converts all html files in a directory to pdf files."""
@@ -48,6 +67,8 @@ def _convert_to_pdf(output_dir: str):
                         # https://github.com/wkhtmltopdf/wkhtmltopdf/issues/4460#issuecomment-661345113
                         options = {'enable-local-file-access': None}
                         pdfkit.from_file(input_path, output_path, options=options, verbose=True)
+
+                        upload_to_s3(output_path)
                         
                     except Exception as e:
                         print(f"Error converting {input_path} to {output_path}: {e}")

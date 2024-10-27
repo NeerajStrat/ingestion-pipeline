@@ -175,9 +175,9 @@ def load_pdf(
     # Super hacky approach to get this to feature complete on time.
     # TODO: Come up with better abstractions for this and the other methods in this module.
     with TemporaryDirectory() as temp_dir:
-        temp_file_path = Path(temp_dir) / f"{str(document["_id"])}.pdf"
+        temp_file_path = Path(temp_dir) / f"{str(document.id)}.pdf"
         with open(temp_file_path, "wb") as temp_file:
-            with requests.get(str(document["url"]), stream=True) as r:
+            with requests.get(str(document.url), stream=True) as r:
                 r.raise_for_status()
                 for chunk in r.iter_content(chunk_size=8192):
                     temp_file.write(chunk)
@@ -185,7 +185,7 @@ def load_pdf(
             reader = PDFReader()
             return reader.load_data(
                 temp_file_path, extra_info={
-                    constants.DB_DOC_ID_KEY: str(document["_id"])
+                    constants.DB_DOC_ID_KEY: str(document.id)
                 }
             )
         
