@@ -1,14 +1,11 @@
 import os
-import asyncio
 import constants
 import schema
 from tqdm.asyncio import tqdm
-from pymongo import ASCENDING
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from fastapi.encoders import jsonable_encoder
 from pathlib import Path
-# from sse_starlette.sse import EventSourceResponse
 from ingestion.stock_utils import get_stocks_by_symbol, Stock
 from ingestion.file_utils import get_available_filings, Filing, load_pdf
 from pytickersymbols import PyTickerSymbols
@@ -94,17 +91,6 @@ async def async_upsert_documents_from_filings(tickers, collection):
             yield event
 
     yield {"event": "done", "data": "Completed processing all filings."}
-
-
-# async def ingest_document_db(db_session: Tuple[AsyncIOMotorDatabase, object], tickers: List[str]):
-    # """
-    # Initiates the document ingestion process and returns SSE for each filing.
-    # """
-    # async with db_session as (db, session):
-    #     collection = db.get_collection(constants.COLLECTION_NAME)
-    #     await collection.create_index([("url", ASCENDING)], unique=True)
-    #     return await async_upsert_documents_from_filings(tickers, collection)
-
 
 def build_doc_id_to_index_map(documents: List[schema.Document]) -> Dict[str, VectorStoreIndex]:
     """
