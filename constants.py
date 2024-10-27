@@ -14,7 +14,7 @@ SEC_EDGAR_EMAIL="my.email@domain.com"
 BUCKET_NAME="finaillm"
 
 # Database
-DB_NAME="finaillm-sec1-documents"
+DB_NAME="finaillm-sec-documents"
 COLLECTION_NAME = "sec-documents"
 CONVERSATION_COLLECTION_NAME="conversations"
 MESSAGES_COLLECTION_NAME="messages"
